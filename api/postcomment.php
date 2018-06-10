@@ -61,7 +61,7 @@ if( isset($access_token) ){
         'author_url' => $author_url
     );
 
-    if(!!$forum_data -> cookie){
+    if(!!db_select('cookie')){
         $post_data -> state = $approved;
     }
 }
@@ -78,7 +78,7 @@ if( $data -> code == 0 ){
 
     $id = $data -> response -> id;
     $createdAt = $data -> response ->createdAt;
-    $parentPost = $forum_data -> posts -> $parent;
+    $parentPost = db_select('posts', $parent);
 
     // 父评邮箱号存在
     if( isset($parentPost) ){
@@ -111,16 +111,16 @@ if( $data -> code == 0 ){
 
     // 匿名用户暂存邮箱号
     if( !isset($access_token) ){
-        foreach ( $forum_data -> posts as $key => $post ){
+        foreach ( db_select('posts') as $key => $post ){
             if(strtotime('-1 month') > strtotime($post -> createdAt)){
-                unset($forum_data -> posts -> $key);
+                db_remove('posts', $key);
             }
         }
-        $forum_data -> posts -> $id = (object) array(
+        $posts_data =  (object) array(
             'email' => $author_email,
             'createdAt' => $createdAt
         );
-        file_put_contents($data_path, json_encode($forum_data));
+        db_update('posts', $posts_data, $id);
     }
 
 } else {

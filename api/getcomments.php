@@ -54,7 +54,7 @@ $data -> cursor -> total = $detail -> response -> posts;
 $output = $data -> code == 0 ? (object) array(
     'code' => 0,
     'cursor' => $data -> cursor,
-    'forum' => $forum_data -> forum,
+    'forum' => db_select('forum'),
     'link' => 'https://disqus.com/home/discussion/'.DISQUS_SHORTNAME.'/'.$detail -> response -> slug.'/?l=zh',
     'response' => $posts,
     'thread' => $detail -> response -> id

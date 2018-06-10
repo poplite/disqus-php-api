@@ -31,11 +31,10 @@ $approved = DISQUS_APPROVED == 1 ? 'approved' : null;
 $url = parse_url(DISQUS_WEBSITE);
 $website = $url['scheme'].'://'.$url['host'];
 
-// 缓存文件
-$data_path = sys_get_temp_dir().'/disqus_'.DISQUS_SHORTNAME.'.json';
-$forum_data = json_decode(file_get_contents($data_path));
-
 $user = $_COOKIE['access_token'];
+
+// 数据库连接
+$db_conn = db_connect();
 
 if ( isset($user) ){
 
@@ -63,8 +62,6 @@ if ( isset($user) ){
 }
 
 function adminLogin(){
-
-    global $data_path, $forum_data;
 
     $fields = (object) array(
         'username' => DISQUS_EMAIL,
@@ -105,14 +102,12 @@ function adminLogin(){
 
     }
 
-    $forum_data -> cookie = $cookie;
-
-    file_put_contents($data_path, json_encode($forum_data));
+    db_update('cookie', $cookie);
 }
 
 // 鉴权
 function getAccessToken($fields){
-    global $data_path, $forum_data, $access_token, $jwt;
+    global $access_token, $jwt;
 
     extract($_POST);
     $url = 'https://disqus.com/api/oauth/2.0/access_token/?';
@@ -174,10 +169,8 @@ function fields_format($fields){
 
 function curl_get($url, $fields){
 
-    global $forum_data;
-
     $fields -> api_key = DISQUS_PUBKEY;
-    $cookies = 'sessionid='.$forum_data -> cookie -> sessionid;
+    $cookies = 'sessionid='.db_select('cookie', 'sessionid');
 
     $fields_string = fields_format($fields);
 
@@ -212,7 +205,7 @@ function curl_get($url, $fields){
 
 function curl_post($url, $fields){
 
-    global $access_token, $forum_data;
+    global $access_token;
 
     if( isset($access_token) && strpos($url, 'threads/create') === false && strpos($url, 'media') === false ){
 
@@ -222,7 +215,7 @@ function curl_post($url, $fields){
     } else {
 
         $fields -> api_key = DISQUS_PUBKEY;
-        $cookies = 'sessionid='.$forum_data -> cookie -> sessionid;
+        $cookies = 'sessionid='.db_select('cookie', 'sessionid');
     }
 
     if( strpos($url, 'media') !== false ){
@@ -270,7 +263,7 @@ function curl_post($url, $fields){
 }
 
 function post_format( $post ){
-    global $emoji, $forum_data;
+    global $emoji;
 
     // 是否是管理员
     $isMod = ($post -> author -> username == DISQUS_USERNAME || $post -> author -> email == DISQUS_EMAIL ) && $post -> author -> isAnonymous == false ? true : false;
@@ -280,7 +273,8 @@ function post_format( $post ){
     if( defined('GRAVATAR_DEFAULT') ){
         $avatar_default = GRAVATAR_DEFAULT;
     } else {
-        $avatar_default = strpos($forum_data -> forum -> avatar, 'https') !== false ? $forum_data -> forum -> avatar : 'https:'.$forum_data -> forum -> avatar;
+        $avatar_forum = db_select('forum', 'avatar');
+        $avatar_default = strpos($avatar_forum, 'https') !== false ? $avatar_forum : 'https:'.$avatar_forum;
     }
 
     $avatar_url = GRAVATAR_CDN.md5($post -> author -> name).'?d='.$avatar_default.'&s=92&f=y';
@@ -336,7 +330,7 @@ function post_format( $post ){
     // 是否已删除
     if(!!$post -> isDeleted){
         $post -> message = '';
-        $post -> author -> avatar -> cache =  $forum_data -> forum -> avatar;
+        $post -> author -> avatar -> cache =  db_select('forum', 'avatar');
         $post -> author -> username = '';
         $post -> author -> name = '';
         $post -> author -> url = '';
@@ -360,9 +354,78 @@ function post_format( $post ){
     return $data;
 }
 
-function getForumData(){
+// 连接数据库
+function db_connect() {
 
-    global $data_path, $forum_data;
+    $conn = pg_connect(DATABASE_URL);
+
+    // 是否存在 disqus 表
+    $result = pg_query($conn, "SELECT CASE WHEN EXISTS( SELECT 1 FROM pg_tables WHERE tablename = 'disqus' ) THEN 1 ELSE 0 END");
+    $isTableExists = pg_fetch_result($result, 0);
+
+    // 若不存在，则新建 disqus 表
+    if( !$isTableExists ) {
+        pg_query($conn, "CREATE TABLE disqus(type VARCHAR(10) UNIQUE, data jsonb)");
+        pg_query($conn, "INSERT INTO disqus(type, data) VALUES('forum', '{}')");
+        pg_query($conn, "INSERT INTO disqus(type, data) VALUES('posts', '{}')");
+        pg_query($conn, "INSERT INTO disqus(type, data) VALUES('cookie', '{}')");
+    }
+
+    return $conn;
+}
+
+// 获取数据
+function db_select($type, $key = NULL){
+    global $db_conn;
+
+    if( $key ) {
+        $query = sprintf("SELECT data->'%s' FROM disqus WHERE type = '%s'", $key, $type);
+    } else {
+        $query = sprintf("SELECT data FROM disqus WHERE type = '%s'", $type);
+    }
+
+    $result = pg_query($db_conn, $query);
+    if( $result ) {
+        return json_decode(pg_fetch_result($result, 0));
+    } else {
+        error_log(pg_result_error($result));
+    }
+}
+
+// 更新数据
+function db_update($type, $data, $key = NULL){
+    global $db_conn;
+
+    $data = json_encode($data);
+    if( $key ) {
+        $query = sprintf("UPDATE disqus SET data = jsonb_set(data, '{%s}', '%s') WHERE type = '%s'", $key, $data, $type);
+    } else {
+        $query = sprintf("UPDATE disqus SET data = '%s' WHERE type = '%s'", $data, $type);
+    }
+
+    $result = pg_query($db_conn, $query);
+    if( !$result ) {
+        error_log(pg_last_error($db_conn));
+    }
+}
+
+// 删除数据
+function db_remove($type, $key = NULL){
+    global $db_conn;
+
+    if( $key ) {
+        $query = sprintf("UPDATE disqus SET data = data - '%s' WHERE type = '%s'", $key, $type);
+    } else {
+        $query = sprintf("UPDATE disqus SET data = '{}' WHERE type = '%s'", $type);
+    }
+
+    $result = pg_query($db_conn, $query);
+    if( !$result ) {
+        error_log(pg_last_error($db_conn));
+    }
+}
+
+function getForumData(){
 
     $fields = (object) array(
         'forum' => DISQUS_SHORTNAME
@@ -379,8 +442,7 @@ function getForumData(){
         'expires' => time() + 3600*24
     );
     if( $data -> code == 0 ){
-        $forum_data -> forum = $forum;
-        file_put_contents($data_path, json_encode($forum_data));
+        db_update('forum', $forum);
     }
 }
 
@@ -400,10 +462,10 @@ function getCurrentDir (){
 
 }
 
-if( time() > strtotime($forum_data -> cookie -> expires) || !$forum_data -> cookie){
+if( time() > strtotime(db_select('cookie', 'expires')) || !db_select('cookie')){
     adminLogin();
 }
 
-if( time() > $forum_data -> forum -> expires || !$forum_data -> forum){
+if( time() > db_select('forum', 'expires') || !db_select('forum')){
     getForumData();
 }

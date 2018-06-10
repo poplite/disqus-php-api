@@ -14,7 +14,8 @@ require_once('init.php');
 if( defined('GRAVATAR_DEFAULT') ){
     $avatar_default = GRAVATAR_DEFAULT;
 } else {
-    $avatar_default = strpos($forum_data -> forum -> avatar, 'https') !== false ? $forum_data -> forum -> avatar : 'https:'.$forum_data -> forum -> avatar;
+    $avatar_forum = db_select('forum', 'avatar');
+    $avatar_default = strpos($avatar_forum, 'https') !== false ? $avatar_forum : 'https:'.$avatar_forum;
 }
 $gravatar =  GRAVATAR_CDN.md5($_GET['name']).'?d='.$avatar_default.'&s=92&f=y';
 

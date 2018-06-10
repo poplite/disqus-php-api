@@ -49,6 +49,15 @@ define('GRAVATAR_DEFAULT', 'retro');
 define('EMOJI_PATH', 'https://assets-cdn.github.com/images/icons/emoji/unicode/');
 
 /*
+ * PostgreSQL 数据库设置
+ *
+ * DATABASE_URL  以 postgresql:// 开头的数据库 URL
+ *
+ */
+
+define('DATABASE_URL', '');
+
+/*
  * PHP Mailer 设置
  *
  * SMTP_SECURE    安全协议
